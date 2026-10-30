@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Portofolio Grow</title>
+  <style>
+    :root {
+      --ungu: #6c5ce7;
+      --pink: #fd79a8;
+      --kuning: #ffeaa7;
+      --gelap: #2d3436;
+      --terang: #fafaff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: var(--terang);
+      color: var(--gelap);
+      line-height: 1.6;
+    }
+    header {
+      text-align: center;
+      padding: 90px 20px;
+      background: linear-gradient(135deg, var(--ungu), var(--pink));
+      color: white;
+    }
+    header h1 { font-size: 2.6rem; margin-bottom: 10px; }
+    header p { font-size: 1.1rem; opacity: 0.95; }
+    section {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 60px 20px;
+    }
+    h2 {
+      font-size: 1.6rem;
+      margin-bottom: 25px;
+      color: var(--ungu);
+    }
+    .kartu-wadah {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 20px;
+    }
+    .kartu {
+      background: white;
+      padding: 24px;
+      border-radius: 14px;
+      border-top: 5px solid var(--pink);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+    }
+    .kartu h3 { margin-bottom: 8px; }
+    .artikel {
+      list-style: none;
+    }
+    .artikel li {
+      background: white;
+      padding: 16px 20px;
+      border-radius: 10px;
+      margin-bottom: 12px;
+      border-left: 5px solid var(--kuning);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    }
+    .artikel a {
+      color: var(--gelap);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .artikel a:hover { color: var(--ungu); }
+    footer {
+      text-align: center;
+      padding: 30px;
+      color: #888;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Halo, saya Grow</h1>
+    <p>Selamat datang di portofolio saya</p>
+  </header>
+
+  <section id="tentang">
+    <h2>Tentang Saya</h2>
+    <p>Tulis perkenalan singkat tentang dirimu di sini.</p>
+  </section>
+
+  <section id="proyek">
+    <h2>Proyek Saya</h2>
+    <div class="kartu-wadah">
+      <div class="kartu">
+        <h3>Proyek 1</h3>
+        <p>Deskripsi singkat proyek pertamamu.</p>
+      </div>
+      <div class="kartu">
+        <h3>Proyek 2</h3>
+        <p>Deskripsi singkat proyek keduamu.</p>
+      </div>
+      <div class="kartu">
+        <h3>Proyek 3</h3>
+        <p>Deskripsi singkat proyek ketigamu.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="artikel">
+    <h2>Artikel Saya</h2>
+    <ul class="artikel">
+      <!-- ARTIKEL-BARU-DI-BAWAH-INI -->
+      <li><a href="#">Contoh judul artikel pertama</a></li>
+      <li><a href="#">Contoh judul artikel kedua</a></li>
+    </ul>
+  </section>
+
+  <footer>
+    &copy; 2026 Grow. Dibuat dengan semangat belajar.
+  </footer>
+
+</body>
+</html>
