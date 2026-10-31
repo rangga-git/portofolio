@@ -20,11 +20,20 @@ const FALLBACK = process.env.GEMINI_FALLBACK_MODEL || "gemini-3-flash-preview";
 // Catatan pesan yang sudah diproses, supaya kiriman ulang dari Telegram diabaikan
 const sudahDiproses = new Set();
 
+const PETUNJUK_BIASA =
+  "Kamu adalah asisten pribadi yang ramah. Jawab dalam bahasa Indonesia yang jelas dan singkat.";
+const PETUNJUK_RISET =
+  "Kamu adalah asisten riset. Cari informasi terbaru di internet, lalu rangkum dalam bahasa Indonesia yang jelas dengan poin-poin singkat. Jangan mengarang. Kalau informasinya tidak ditemukan atau tidak pasti, katakan terus terang.";
+
 async function kirimPesan(chatId, teks) {
   await fetch(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text: teks.slice(0, 4000) }),
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: teks.slice(0, 4000),
+      disable_web_page_preview: true,
+    }),
   });
 }
 
@@ -41,42 +50,70 @@ async function kirimMengetik(chatId) {
   }
 }
 
-// Bertanya ke satu model Gemini, dengan batas waktu 12 detik
-async function tanyaSatuModel(model, pertanyaan) {
+// Bertanya ke satu model Gemini. Kalau riset = true, Gemini boleh mencari di Google.
+async function tanyaSatuModel(model, pertanyaan, riset, batasWaktu) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const isi = {
+    systemInstruction: {
+      parts: [{ text: riset ? PETUNJUK_RISET : PETUNJUK_BIASA }],
+    },
+    contents: [{ role: "user", parts: [{ text: pertanyaan }] }],
+  };
+  if (riset) {
+    isi.tools = [{ google_search: {} }];
+  }
   const res = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "x-goog-api-key": GEMINI_KEY,
     },
-    body: JSON.stringify({
-      systemInstruction: {
-        parts: [{ text: "Kamu adalah asisten pribadi yang ramah. Jawab dalam bahasa Indonesia yang jelas dan singkat." }],
-      },
-      contents: [{ role: "user", parts: [{ text: pertanyaan }] }],
-    }),
-    signal: AbortSignal.timeout(12000),
+    body: JSON.stringify(isi),
+    signal: AbortSignal.timeout(batasWaktu),
   });
   const data = await res.json();
   return { ok: res.ok, status: res.status, data };
 }
 
+// Mengambil daftar sumber dari hasil pencarian Google (maksimal 5)
+function ambilSumber(data) {
+  const potongan = data.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+  const daftar = [];
+  const sudahAda = new Set();
+  for (const p of potongan) {
+    const alamat = p.web?.uri;
+    if (alamat && !sudahAda.has(alamat)) {
+      sudahAda.add(alamat);
+      daftar.push(`${daftar.length + 1}. ${p.web.title || "Sumber"}\n${alamat}`);
+    }
+    if (daftar.length >= 5) break;
+  }
+  return daftar;
+}
+
 // Mencoba model utama dulu, kalau sibuk atau lambat pindah ke model cadangan
-async function tanyaGemini(pertanyaan) {
+async function tanyaGemini(pertanyaan, riset) {
+  // Riset butuh waktu lebih lama, jadi hanya satu percobaan dengan batas 25 detik
   const daftarModel = [MODEL];
-  if (FALLBACK && FALLBACK !== MODEL) daftarModel.push(FALLBACK);
+  if (!riset && FALLBACK && FALLBACK !== MODEL) daftarModel.push(FALLBACK);
+  const batasWaktu = riset ? 25000 : 12000;
 
   let pesanTerakhir = "tidak diketahui";
   for (const model of daftarModel) {
     try {
-      const hasil = await tanyaSatuModel(model, pertanyaan);
+      const hasil = await tanyaSatuModel(model, pertanyaan, riset, batasWaktu);
       if (hasil.ok) {
-        const teks = hasil.data.candidates?.[0]?.content?.parts?.map((p) => p.text).join("");
-        return teks || "(Tidak ada jawaban)";
+        let teks = hasil.data.candidates?.[0]?.content?.parts?.map((p) => p.text).join("");
+        teks = teks || "(Tidak ada jawaban)";
+        if (riset) {
+          const sumber = ambilSumber(hasil.data);
+          if (sumber.length > 0) {
+            teks = teks.slice(0, 3000) + "\n\nSumber:\n" + sumber.join("\n");
+          }
+        }
+        return teks;
       }
       pesanTerakhir = hasil.data.error?.message || String(hasil.status);
-      // Hanya lanjut ke model cadangan kalau masalahnya sibuk atau gangguan
       if (![429, 500, 503, 504].includes(hasil.status)) break;
     } catch (e) {
       pesanTerakhir = "Gemini terlalu lama menjawab";
@@ -126,12 +163,29 @@ module.exports = async (req, res) => {
     }
 
     if (teks === "/start") {
-      await kirimPesan(chatId, "Halo Grow! Bot sudah aktif. Kirim pertanyaan apa saja.");
+      await kirimPesan(
+        chatId,
+        "Halo Grow! Bot sudah aktif.\n\nKirim pertanyaan biasa untuk dijawab langsung.\nKetik /riset diikuti topik untuk mencari di internet.\nContoh: /riset perkembangan teknologi baterai terbaru"
+      );
+      return res.status(200).send("ok");
+    }
+
+    // Perintah /riset: mencari di internet lalu merangkum
+    const awalRiset = teks.match(/^\/riset(@\w+)?(\s+([\s\S]*))?$/i);
+    if (awalRiset) {
+      const topik = (awalRiset[3] || "").trim();
+      if (!topik) {
+        await kirimPesan(chatId, "Tulis topiknya setelah /riset.\nContoh: /riset perkembangan teknologi baterai terbaru");
+        return res.status(200).send("ok");
+      }
+      await kirimMengetik(chatId);
+      const hasilRiset = await tanyaGemini(topik, true);
+      await kirimPesan(chatId, hasilRiset);
       return res.status(200).send("ok");
     }
 
     await kirimMengetik(chatId);
-    const jawaban = await tanyaGemini(teks);
+    const jawaban = await tanyaGemini(teks, false);
     await kirimPesan(chatId, jawaban);
     return res.status(200).send("ok");
   } catch (err) {
