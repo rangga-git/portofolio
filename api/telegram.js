@@ -19,6 +19,9 @@ const TAVILY_KEY = process.env.TAVILY_API_KEY;
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const FALLBACK = process.env.GEMINI_FALLBACK_MODEL || "gemini-3-flash-preview";
 
+// Total waktu yang boleh dipakai satu pesan (milidetik). Batas Vercel: 30 detik.
+const TOTAL_WAKTU = 26000;
+
 // Catatan pesan yang sudah diproses, supaya kiriman ulang dari Telegram diabaikan
 const sudahDiproses = new Set();
 
@@ -75,15 +78,21 @@ async function tanyaSatuModel(model, pertanyaan, petunjuk, batasWaktu) {
   return { ok: res.ok, status: res.status, data };
 }
 
-// Mencoba model utama dulu, kalau sibuk atau lambat pindah ke model cadangan
-async function tanyaGemini(pertanyaan, petunjuk, batasWaktu, pakaiCadangan) {
+// Mencoba model utama dulu. Kalau sibuk atau lambat, pindah ke model cadangan
+// dengan sisa waktu yang ada. "tenggat" adalah jam batas akhir (Date.now() + sisa waktu).
+async function tanyaGemini(pertanyaan, petunjuk, tenggat, pakaiCadangan) {
   const daftarModel = [MODEL];
   if (pakaiCadangan && FALLBACK && FALLBACK !== MODEL) daftarModel.push(FALLBACK);
 
   let pesanTerakhir = "tidak diketahui";
-  for (const model of daftarModel) {
+  for (let i = 0; i < daftarModel.length; i++) {
+    const sisa = tenggat - Date.now();
+    if (sisa < 5000) break;
+    const adaBerikutnya = i < daftarModel.length - 1;
+    // Model utama dapat 60% sisa waktu supaya cadangan masih kebagian
+    const batasWaktu = adaBerikutnya ? Math.floor(sisa * 0.6) : sisa;
     try {
-      const hasil = await tanyaSatuModel(model, pertanyaan, petunjuk, batasWaktu);
+      const hasil = await tanyaSatuModel(daftarModel[i], pertanyaan, petunjuk, batasWaktu);
       if (hasil.ok) {
         const teks = hasil.data.candidates?.[0]?.content?.parts?.map((p) => p.text).join("");
         return { ok: true, teks: teks || "(Tidak ada jawaban)" };
@@ -113,7 +122,7 @@ async function cariDiInternet(topik) {
       search_depth: "basic",
       max_results: 5,
     }),
-    signal: AbortSignal.timeout(9000),
+    signal: AbortSignal.timeout(8000),
   });
   const data = await res.json();
   if (!res.ok) {
@@ -124,7 +133,7 @@ async function cariDiInternet(topik) {
 }
 
 // Riset lengkap: cari -> rangkum -> tempel daftar sumber
-async function riset(topik) {
+async function riset(topik, mulai) {
   if (!TAVILY_KEY) {
     return "Kunci pencarian (TAVILY_API_KEY) belum diisi di brankas Vercel.";
   }
@@ -140,11 +149,11 @@ async function riset(topik) {
   }
 
   const bahan = hasilCari
-    .map((h, i) => `[${i + 1}] ${h.title}\nAlamat: ${h.url}\nIsi: ${(h.content || "").slice(0, 900)}`)
+    .map((h, i) => `[${i + 1}] ${h.title}\nAlamat: ${h.url}\nIsi: ${(h.content || "").slice(0, 700)}`)
     .join("\n\n");
   const pertanyaan = `Topik riset: ${topik}\n\nHasil pencarian:\n\n${bahan}`;
 
-  const jawaban = await tanyaGemini(pertanyaan, PETUNJUK_RISET, 14000, false);
+  const jawaban = await tanyaGemini(pertanyaan, PETUNJUK_RISET, mulai + TOTAL_WAKTU, true);
   if (!jawaban.ok) return jawaban.teks;
 
   const sumber = hasilCari.map((h, i) => `[${i + 1}] ${h.title}\n${h.url}`).join("\n");
@@ -152,6 +161,7 @@ async function riset(topik) {
 }
 
 module.exports = async (req, res) => {
+  const mulai = Date.now();
   try {
     // Satpam 1: pastikan pesan benar-benar dari Telegram
     if (req.headers["x-telegram-bot-api-secret-token"] !== SECRET) {
@@ -208,12 +218,12 @@ module.exports = async (req, res) => {
         return res.status(200).send("ok");
       }
       await kirimMengetik(chatId);
-      await kirimPesan(chatId, await riset(topik));
+      await kirimPesan(chatId, await riset(topik, mulai));
       return res.status(200).send("ok");
     }
 
     await kirimMengetik(chatId);
-    const jawaban = await tanyaGemini(teks, PETUNJUK_BIASA, 12000, true);
+    const jawaban = await tanyaGemini(teks, PETUNJUK_BIASA, mulai + 22000, true);
     await kirimPesan(chatId, jawaban.teks);
     return res.status(200).send("ok");
   } catch (err) {
